@@ -1,0 +1,159 @@
+/*****PROJECT NAME: CREATING AN ANALYSIS REPORT ON USA TSA DATASET ******/
+
+/********************************************/
+/* NAME : POOJA MORE 						*/
+/* EMAIL ID: pooja.more@praxis.ac.in 		*/
+/********************************************/
+
+/************ ACCESSING THE DATA *****************/
+
+%let path=/home/u45146562/ECRB94/data;
+options validvarname=v7;
+libname TSA "&path";
+
+proc import datafile="&path/TSAClaims2002_2017.csv"
+	dbms=csv out=tsa.ClaimsImport replace;
+	guessingrows=max;
+run;
+
+/* ********************************************* */
+
+/*********** EXPLORING THE DATA **************/
+
+/* To get quick snap shot of tables and columns */
+proc PRINT data=tsa.Claimsimport (obs=50);
+	drop item_category;
+run;
+
+/* To get closer look at the properties of the columns */
+proc contents data=tsa.claimsimport varnum;
+run;
+
+/* To get a closer look at categorical variables */
+proc freq data=tsa.claimsimport;
+	tables claim_site disposition claim_type incident_date date_received statename/ nocum nopercent;
+	format incident_date date_received year4.;
+run;
+
+proc print date=tsa.claimsimport;
+	where date_received>incident_date;
+	format date_received incident_date date9.;
+run;
+
+
+/*********** PREPARING THE DATA *********************/
+
+/* Remove the duplicated rows */
+proc sort data=tsa.claimsimport out=tsa.claim_nodups noduprecs;
+	by _all_;
+run;
+
+/* Sort the data by ascending order of incident_date */
+proc sort data=tsa.claim_nodups;
+	by incident_date;
+run;
+
+proc print data=tsa.claimsimport (obs=100);
+run;
+
+
+data tsa.claims_cleaned;
+	set tsa.claim_nodups;
+/* Clean the claim_site column */
+	if claim_site in("-","") then claim_site="Unknown";
+/* Clean the disposition column */
+	if disposition in("-","") then disposition="Unknown";
+	else if disposition ="losed: Contractor Claim" then disposition="Closed:Contractor Claim";
+	else if disposition ="Closed: Canceled" then disposition="Closed:Canceled";
+/* Clean the claim_type column */
+	if claim_type in("-","") then claim_type="Unknown";
+	else if claim_type="Passenger Property Loss/Personal Injur" then claim_type="Passenger Property Loss";
+	else if claim_type="Passenger Property Loss/Personal Injury" then claim_type="Passenger Property Loss";
+	else if claim_type="Property Damage/Personal Injury" then claim_type="Property Damage";
+	
+/* Convert all state values to upper case and all statename values to proper case */
+	state=upcase(state);
+	statename=propcase(statename);
+	
+/* Create a new column to indicate the date issues */
+	if (incident_date>date_received or date_received=. or incident_date=.) or 
+		year(incident_date)<2002 or
+		year(incident_date)>2017 or
+		year(date_received)<2002 or
+		year(date_received)>2017 then
+		date_issues="Needs Review";
+		
+/* Add Permanent labels and formats */
+	format incident_date date_received date9. close_amount dollar20.2;
+	label airport_code="Airport Code" airport_name="Airport Name";
+	
+/* Drop County and City Columns */
+	drop county city;
+run;
+
+/* Re-checking the data preparation */
+proc freq data=tsa.claims_cleaned order=freq;
+	tables claim_site disposition claim_type date_issues statename / nopercent nocum;
+run;
+
+/********ANALYZING THE DATA ************/
+/* Overall date issues */
+
+%let outpath=/home/u45146562/ECRB94/output;
+
+/********EXPLORING THE DATA ************/
+/* Exporting the report in PDF file */
+ods pdf file="&outpath/ClaimsReport.pdf" style=meadow pdftoc=1;
+ods noproctitle;
+
+ods proctitle " Overall date issues";
+title "Overall date issues in the data";
+proc freq data=tsa.claims_cleaned;
+	tables date_issues / nocum nopercent missing;
+run;
+title;
+
+title "Overall states in the data";
+proc freq data=tsa.claims_cleaned;
+	tables statename / nocum nopercent;
+run;
+title;
+
+/* Overall claims by year */
+ods graphics on;
+title "Overall claims by year";
+proc freq data=tsa.claims_cleaned;
+	tables incident_date / nocum nopercent plots=freqplot;
+	format incident_date year4.;
+	where date_issues is null;
+run;
+title;
+
+/* Specific State analysis */
+/* Frequency values for claim_type claim_site and disposition for the selected state */
+%let statename=Hawaii;
+title "Hawaii Claim_type claim_site & disposition";
+proc freq data=tsa.claims_cleaned order=freq;
+	tables claim_type claim_site disposition;
+	where statename="&statename" and date_issues is null;
+run;
+title;
+
+/* Close amount for selected state */
+proc means data=tsa.claims_cleaned mean min max maxdec=0;
+	var close_amount;
+	where statename="&statename" and data_issues is null;
+run;
+ods pdf close;
+
+/* Validation Code */
+proc means data=tsa.claims_cleaned;
+	var close_amount;
+	where statename="&statename";
+run;
+
+proc print data=tsa.claims_cleaned (obs=30);
+run;
+
+proc freq data=tsa.claims_cleaned;
+run;
